@@ -22,25 +22,33 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 type ToolTab = 'shaft' | 'gear' | 'stress' | 'fatigue' | 'bearing' | 'dfm' | 'manufacturing' | 'bom' | 'ai-modeling' | 'ai-vba' | 'ai-python' | 'ai-spec';
 
-// Safe fetch helper — handles non-JSON responses (e.g. proxy HTML error pages)
+// Safe fetch helper — handles non-JSON responses and auto-retries on 502/503/504
 async function fetchJSON(url: string, options?: RequestInit, timeoutMs = 30000): Promise<any> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { ...options, signal: controller.signal });
-    const contentType = res.headers.get('content-type') || '';
-    if (!contentType.includes('application/json')) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Server returned non-JSON response (${res.status}). ${text.slice(0, 120)}`);
+  const maxRetries = 2;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await res.text().catch(() => '');
+        if (attempt < maxRetries && [502, 503, 504].includes(res.status)) {
+          await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+          continue;
+        }
+        throw new Error(`Server returned non-JSON response (${res.status}). ${text.slice(0, 120)}`);
+      }
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || `Request failed with status ${res.status}`);
+      }
+      return data;
+    } finally {
+      clearTimeout(timer);
     }
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || `Request failed with status ${res.status}`);
-    }
-    return data;
-  } finally {
-    clearTimeout(timer);
   }
+  throw new Error('Server unavailable after retries');
 }
 
 // =============================================
@@ -813,20 +821,46 @@ function AI3DModelGenerator() {
     setError('');
     setImage(null);
     setModelingPlan('');
-    setLoadingText('Generating 3D visualization...');
+    setLoadingText('Starting 3D generation...');
 
     try {
-      const data = await fetchJSON('/api/ai/generate-3d', {
+      // Step 1: Start the task (returns immediately)
+      const startRes = await fetchJSON('/api/ai/generate-3d', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ description: descriptionInput }),
-      }, 180000); // 3 min timeout
+      });
 
-      if (data.error) {
-        setError(data.error);
-      } else {
-        if (data.image) setImage(data.image);
-        if (data.modelingPlan) setModelingPlan(data.modelingPlan);
+      if (!startRes.success || !startRes.taskId) {
+        setError(startRes.error || 'Failed to start generation');
+        setLoading(false);
+        return;
+      }
+
+      const taskId = startRes.taskId;
+
+      // Step 2: Poll for results
+      const maxPolls = 60; // 60 * 3s = 3 minutes max
+      for (let i = 0; i < maxPolls; i++) {
+        await new Promise(r => setTimeout(r, 3000)); // Poll every 3s
+
+        const statusRes = await fetchJSON(`/api/ai/generate-3d?taskId=${taskId}`, undefined, 10000);
+
+        if (statusRes.status === 'generating_image') {
+          setLoadingText('Generating 3D visualization...');
+        } else if (statusRes.status === 'generating_plan') {
+          setLoadingText('Creating modeling plan...');
+        } else if (statusRes.status === 'completed') {
+          if (statusRes.image) setImage(statusRes.image);
+          if (statusRes.modelingPlan) setModelingPlan(statusRes.modelingPlan);
+          break;
+        } else if (statusRes.status === 'error') {
+          setError(statusRes.error || 'Generation failed');
+          break;
+        } else if (statusRes.error) {
+          setError(statusRes.error);
+          break;
+        }
       }
     } catch (e: any) {
       const msg = e.name === 'AbortError' ? 'Request timed out. Please try again.' : e.message;

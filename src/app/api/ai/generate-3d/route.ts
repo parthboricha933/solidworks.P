@@ -1,75 +1,71 @@
 import { NextRequest } from 'next/server';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
+import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs/promises';
 
-const execFileAsync = promisify(execFile);
+const TASKS_DIR = path.join(process.cwd(), 'download', '.ai-tasks');
 
-function enhancePromptFor3D(description: string): string {
-  return `Professional 3D CAD rendering: ${description}. Isometric view, gray background, metallic finish, SolidWorks style, studio lighting, no text`;
+async function ensureTasksDir() {
+  await fs.mkdir(TASKS_DIR, { recursive: true });
 }
 
+// POST: Start 3D generation task (returns immediately)
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { description } = body;
 
     if (!description || !description.trim()) {
-      return new Response(JSON.stringify({ error: 'Description is required' }), {
-        status: 400, headers: { 'Content-Type': 'application/json' }
-      });
+      return Response.json({ error: 'Description is required' }, { status: 400 });
     }
 
-    const enhancedPrompt = enhancePromptFor3D(description);
-    const outputDir = path.join(process.cwd(), 'download');
-    await fs.mkdir(outputDir, { recursive: true });
-    const timestamp = Date.now();
-    const outputPath = path.join(outputDir, `3d-model-${timestamp}.png`);
+    await ensureTasksDir();
+    const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const taskFile = path.join(TASKS_DIR, `${taskId}.json`);
 
-    // Step 1: Generate image
-    await execFileAsync('z-ai-generate', [
-      '-p', enhancedPrompt,
-      '-o', outputPath,
-      '-s', '1024x1024',
-    ], { timeout: 120000 });
+    // Write initial task status
+    await fs.writeFile(taskFile, JSON.stringify({
+      id: taskId,
+      status: 'pending',
+      description,
+      createdAt: Date.now(),
+    }));
 
-    // Step 2: Generate short modeling plan
-    const ZAI = (await import('z-ai-web-dev-sdk')).default;
-    const zai = await ZAI.create();
-
-    const planCompletion = await zai.chat.completions.create({
-      messages: [
-        {
-          role: 'system',
-          content: `Expert SolidWorks engineer. Write a concise step-by-step modeling plan under 80 words. Numbered steps with features and dimensions.`
-        },
-        {
-          role: 'user',
-          content: `Plan for: ${description}`
-        }
-      ],
-      temperature: 0.3,
-      max_tokens: 200,
+    // Spawn detached worker process (independent from Next.js)
+    const workerPath = path.join(process.cwd(), 'ai-worker.mjs');
+    const child = spawn('node', [workerPath, taskId, description], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env },
     });
+    child.unref(); // Allow parent to exit without waiting for child
 
-    const modelingPlan = planCompletion.choices[0]?.message?.content || '';
-
-    // Step 3: Read and return image
-    const imageBuffer = await fs.readFile(outputPath);
-    const base64Image = imageBuffer.toString('base64');
-
-    return new Response(JSON.stringify({
-      success: true,
-      image: base64Image,
-      modelingPlan,
-    }), {
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return Response.json({ success: true, taskId, status: 'pending' });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : '3D generation error';
-    return new Response(JSON.stringify({ error: message }), {
-      status: 500, headers: { 'Content-Type': 'application/json' }
-    });
+    const message = error instanceof Error ? error.message : 'Error';
+    return Response.json({ error: message }, { status: 500 });
+  }
+}
+
+// GET: Check task status
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const taskId = searchParams.get('taskId');
+
+    if (!taskId) {
+      return Response.json({ error: 'taskId is required' }, { status: 400 });
+    }
+
+    const taskFile = path.join(TASKS_DIR, `${taskId}.json`);
+    try {
+      const data = await fs.readFile(taskFile, 'utf-8');
+      return Response.json(JSON.parse(data));
+    } catch {
+      return Response.json({ error: 'Task not found' }, { status: 404 });
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Error';
+    return Response.json({ error: message }, { status: 500 });
   }
 }
