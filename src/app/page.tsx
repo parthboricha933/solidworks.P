@@ -22,6 +22,27 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 type ToolTab = 'shaft' | 'gear' | 'stress' | 'fatigue' | 'bearing' | 'dfm' | 'manufacturing' | 'bom' | 'ai-modeling' | 'ai-vba' | 'ai-python' | 'ai-spec';
 
+// Safe fetch helper — handles non-JSON responses (e.g. proxy HTML error pages)
+async function fetchJSON(url: string, options?: RequestInit, timeoutMs = 30000): Promise<any> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Server returned non-JSON response (${res.status}). ${text.slice(0, 120)}`);
+    }
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || `Request failed with status ${res.status}`);
+    }
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // =============================================
 // SHAFT DESIGN CALCULATOR
 // =============================================
@@ -36,7 +57,7 @@ function ShaftCalculator() {
   const calculate = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/engineering', {
+      const data = await fetchJSON('/api/engineering', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -51,7 +72,6 @@ function ShaftCalculator() {
           },
         }),
       });
-      const data = await res.json();
       setResult(data.result);
     } catch (e) { console.error(e); }
     setLoading(false);
@@ -114,7 +134,7 @@ function GearCalculator() {
   const calculate = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/engineering', {
+      const data = await fetchJSON('/api/engineering', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tool: 'gear',
@@ -126,7 +146,6 @@ function GearCalculator() {
           },
         }),
       });
-      const data = await res.json();
       setResult(data.result);
     } catch (e) { console.error(e); }
     setLoading(false);
@@ -197,11 +216,10 @@ function StressCalculator() {
   const calculate = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/engineering', {
+      const data = await fetchJSON('/api/engineering', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tool: 'stress', input: { ...input, axialForce: parseFloat(input.axialForce), bendingMoment: parseFloat(input.bendingMoment), beamShape: input.beamShape, beamOuterDia: parseFloat(input.beamOuterDia), beamInnerDia: parseFloat(input.beamInnerDia) || 0, torque: parseFloat(input.torque), shaftDiameter: parseFloat(input.shaftDiameter), yieldStrength: parseFloat(input.yieldStrength), safetyFactor: parseFloat(input.safetyFactor) } }),
       });
-      const data = await res.json();
       setResult(data.result);
     } catch (e) { console.error(e); }
     setLoading(false);
@@ -290,11 +308,10 @@ function FatigueCalculator() {
   const calculate = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/engineering', {
+      const data = await fetchJSON('/api/engineering', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tool: 'fatigue', input: { meanStress: parseFloat(input.meanStress), alternatingStress: parseFloat(input.alternatingStress), ultimateTensileStrength: parseFloat(input.ultimateTensileStrength), yieldStrength: parseFloat(input.yieldStrength), surfaceFinish: input.surfaceFinish, sizeFactor: parseFloat(input.sizeFactor), cyclesPerSecond: parseFloat(input.cyclesPerSecond), criteria: input.criteria } }),
       });
-      const data = await res.json();
       setResult(data.result);
     } catch (e) { console.error(e); }
     setLoading(false);
@@ -388,11 +405,10 @@ function BearingCalculator() {
   const calculate = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/engineering', {
+      const data = await fetchJSON('/api/engineering', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tool: 'bearing', input: { radialLoad: parseFloat(input.radialLoad), axialLoad: parseFloat(input.axialLoad), shaftRPM: parseFloat(input.rpm), desiredLifeHours: parseFloat(input.desiredLife), bearingType: input.bearingType, shaftDiameter: parseFloat(input.shaftDia), loadType: input.loadType } }),
       });
-      const data = await res.json();
       setResult(data.result);
     } catch (e) { console.error(e); }
     setLoading(false);
@@ -491,11 +507,10 @@ function DFMAnalyzer() {
   const calculate = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/engineering', {
+      const data = await fetchJSON('/api/engineering', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tool: 'dfm', input: { ...input, partType: input.partType, annualVolume: parseInt(input.annualVolume), minWallThickness: parseFloat(input.minWallThickness), numberOfHoles: parseInt(input.numberOfHoles) } }),
       });
-      const data = await res.json();
       setResult(data.result);
     } catch (e) { console.error(e); }
     setLoading(false);
@@ -615,11 +630,10 @@ function ManufacturingAdvisor() {
   const calculate = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/engineering', {
+      const data = await fetchJSON('/api/engineering', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tool: 'manufacturing', input: { ...input, annualVolume: parseInt(input.annualVolume), maxBudget: parseFloat(input.maxBudget), partWeight: parseFloat(input.partWeight), leadTimeWeeks: parseInt(input.leadTimeWeeks) } }),
       });
-      const data = await res.json();
       setResult(data.result);
     } catch (e) { console.error(e); }
     setLoading(false);
@@ -724,11 +738,10 @@ function BOMEstimator() {
   const calculate = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/engineering', {
+      const data = await fetchJSON('/api/engineering', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tool: 'bom', input: { items } }),
       });
-      const data = await res.json();
       setResult(data.result);
     } catch (e) { console.error(e); }
     setLoading(false);
@@ -803,12 +816,11 @@ function AI3DModelGenerator() {
     setLoadingText('Generating 3D visualization...');
 
     try {
-      const res = await fetch('/api/ai/generate-3d', {
+      const data = await fetchJSON('/api/ai/generate-3d', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ description: descriptionInput }),
-      });
-      const data = await res.json();
+      }, 120000); // 2 min timeout for image generation
 
       if (data.error) {
         setError(data.error);
@@ -817,7 +829,8 @@ function AI3DModelGenerator() {
         if (data.modelingPlan) setModelingPlan(data.modelingPlan);
       }
     } catch (e: any) {
-      setError('Network error: ' + e.message);
+      const msg = e.name === 'AbortError' ? 'Request timed out. Please try again.' : e.message;
+      setError('Error: ' + msg);
     }
 
     setLoading(false);
@@ -969,13 +982,15 @@ function AISolidWorksTool({ type, title, description, placeholder }: { type: str
     setLoading(true);
     setResult('');
     try {
-      const res = await fetch('/api/ai/solidworks', {
+      const data = await fetchJSON('/api/ai/solidworks', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, description: descriptionInput, parameters: parameters || '{}' }),
-      });
-      const data = await res.json();
+      }, 120000); // 2 min timeout for AI generation
       if (data.content) setResult(data.content);
-    } catch (e: any) { setResult('Error: ' + e.message); }
+    } catch (e: any) {
+      const msg = e.name === 'AbortError' ? 'Request timed out. The AI model took too long to respond. Please try again.' : e.message;
+      setResult('Error: ' + msg);
+    }
     setLoading(false);
   };
 
