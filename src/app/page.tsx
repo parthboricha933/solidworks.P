@@ -820,7 +820,7 @@ function AI3DModelGenerator() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ description: descriptionInput }),
-      }, 120000); // 2 min timeout for image generation
+      }, 180000); // 3 min timeout
 
       if (data.error) {
         setError(data.error);
@@ -985,10 +985,11 @@ function AISolidWorksTool({ type, title, description, placeholder }: { type: str
       const data = await fetchJSON('/api/ai/solidworks', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, description: descriptionInput, parameters: parameters || '{}' }),
-      }, 120000); // 2 min timeout for AI generation
+      }, 180000); // 3 min timeout
       if (data.content) setResult(data.content);
+      else if (data.error) setResult('Error: ' + data.error);
     } catch (e: any) {
-      const msg = e.name === 'AbortError' ? 'Request timed out. The AI model took too long to respond. Please try again.' : e.message;
+      const msg = e.name === 'AbortError' ? 'Request timed out. The AI model took too long. Please try again.' : e.message;
       setResult('Error: ' + msg);
     }
     setLoading(false);

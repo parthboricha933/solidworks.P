@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import ZAI from 'z-ai-web-dev-sdk';
 
 export async function POST(request: NextRequest) {
@@ -13,104 +13,66 @@ export async function POST(request: NextRequest) {
 
     switch (type) {
       case 'modeling-plan':
-        systemPrompt = `You are an expert SolidWorks CAD engineer with 20+ years of experience. Generate a detailed, step-by-step SolidWorks modeling plan for the described part. Include:
-1. Part setup (units, template)
-2. Base sketch creation with specific dimensions
-3. Feature-by-feature instructions (Extrude Boss/Base, Cut, Fillet, Chamfer, Pattern, etc.)
-4. Each step should mention the specific SolidWorks command, feature name, and dimensions
-5. Material assignment
-6. Final checks (interference, mass properties)
-
-Format your response in clear Markdown with numbered steps. Be specific about dimensions, references, and SolidWorks commands.`;
-        userPrompt = `Generate a step-by-step SolidWorks modeling plan for:\n${description}\n\nParameters: ${JSON.stringify(parameters, null, 2)}`;
+        systemPrompt = `Expert SolidWorks engineer. Write concise step-by-step modeling plan in Markdown. Include: setup, sketch, features (Extrude/Cut/Fillet/Chamfer), material, checks. Keep under 120 words.`;
+        userPrompt = `Plan for: ${description}${parameters && parameters !== '{}' ? ' Params: ' + JSON.stringify(parameters) : ''}`;
         break;
-
       case 'vba-macro':
-        systemPrompt = `You are a SolidWorks API VBA programming expert. Generate complete, runnable SolidWorks VBA macro code. Requirements:
-1. Use SolidWorks API (SldWorks namespace)
-2. Include error handling
-3. Include comments for each section
-4. Use proper variable naming
-5. Generate the complete code in a single Sub procedure
-6. Include dimension variables that can be easily modified
-7. Follow SolidWorks API best practices
-
-Output ONLY the VBA code block, no explanation outside the code.`;
-        userPrompt = `Generate a SolidWorks VBA macro to create:\n${description}\n\nParameters: ${JSON.stringify(parameters, null, 2)}`;
+        systemPrompt = `SolidWorks VBA expert. Generate complete runnable macro using SldWorks API. Include error handling, comments, parameterized dimensions. Output ONLY the VBA code block.`;
+        userPrompt = `VBA macro to create: ${description}${parameters && parameters !== '{}' ? ' Params: ' + JSON.stringify(parameters) : ''}`;
         break;
-
       case 'python-script':
-        systemPrompt = `You are a SolidWorks Python API expert using pySW or solidworks SDK. Generate complete Python scripts that interact with SolidWorks. Requirements:
-1. Use win32com.client to communicate with SolidWorks
-2. Include error handling with try/except
-3. Include detailed comments
-4. Use parameterized dimensions
-5. Follow best practices for SolidWorks automation
-6. Include material property assignment
-
-Output ONLY the Python code block, no explanation outside the code.`;
-        userPrompt = `Generate a Python script to automate SolidWorks creation of:\n${description}\n\nParameters: ${JSON.stringify(parameters, null, 2)}`;
+        systemPrompt = `SolidWorks Python expert. Generate script using win32com.client with error handling, comments, parameterized dimensions. Output ONLY Python code block.`;
+        userPrompt = `Python script for: ${description}${parameters && parameters !== '{}' ? ' Params: ' + JSON.stringify(parameters) : ''}`;
         break;
-
       case 'design-spec':
-        systemPrompt = `You are a senior mechanical design engineer. Generate a comprehensive design specification document for the described component. Include:
-
-## Project Summary
-- Project Name, Purpose, Industry
-
-## Engineering Analysis
-- Load calculations, stress analysis
-
-## Material Selection
-- Recommended material with justification and properties table
-
-## Design Dimensions
-- All critical dimensions with tolerances
-
-## GD&T
-- Geometric dimensioning and tolerancing recommendations
-
-## SolidWorks Modeling Plan
-- Step-by-step feature-based plan
-
-## BOM
-- Table with parts, materials, quantities
-
-## Manufacturing Process
-- Recommended process with justification
-
-## Cost Estimate
-- Material cost, machining cost, total cost
-
-## Design Validation
-- Stress considerations, safety factors, failure points
-
-Be thorough and specific. Use tables where appropriate.`;
-        userPrompt = `Generate a complete design specification for:\n${description}\n\nParameters: ${JSON.stringify(parameters, null, 2)}`;
+        systemPrompt = `Senior mechanical design engineer. Generate concise spec: Summary, Material, Dimensions, Manufacturing, Cost, Validation. Under 200 words.`;
+        userPrompt = `Spec for: ${description}${parameters && parameters !== '{}' ? ' Params: ' + JSON.stringify(parameters) : ''}`;
         break;
-
       default:
-        return NextResponse.json({ error: `Unknown type: ${type}` }, { status: 400 });
+        return new Response(JSON.stringify({ error: `Unknown type: ${type}` }), {
+          status: 400, headers: { 'Content-Type': 'application/json' }
+        });
     }
 
-    const completion = await zai.chat.completions.create({
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature: 0.3,
-      max_tokens: type === 'vba-macro' || type === 'python-script' ? 4000 : 3000,
+    // Stream the AI response to keep connection alive through proxies
+    const stream = new ReadableStream({
+      async start(controller) {
+        const encoder = new TextEncoder();
+        try {
+          const completion = await zai.chat.completions.create({
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt },
+            ],
+            temperature: 0.3,
+            max_tokens: type === 'vba-macro' || type === 'python-script' ? 2000 : 1200,
+          });
+
+          const content = completion.choices[0]?.message?.content || '';
+
+          // Send as a single JSON response (streamed for keepalive)
+          const json = JSON.stringify({ success: true, type, content });
+          controller.enqueue(encoder.encode(json));
+          controller.close();
+        } catch (err: any) {
+          const errorJson = JSON.stringify({ error: err.message || 'AI generation error' });
+          controller.enqueue(encoder.encode(errorJson));
+          controller.close();
+        }
+      },
     });
 
-    const content = completion.choices[0]?.message?.content || '';
-
-    return NextResponse.json({
-      success: true,
-      type,
-      content,
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'AI generation error';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Failed to start generation';
+    return new Response(JSON.stringify({ error: message }), {
+      status: 500, headers: { 'Content-Type': 'application/json' }
+    });
   }
 }
