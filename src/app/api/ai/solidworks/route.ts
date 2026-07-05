@@ -50,6 +50,9 @@ export async function POST(request: NextRequest) {
       content = result?.choices?.[0]?.message?.content || 'No content generated';
     } catch (err: any) {
       const msg = err?.message || String(err);
+      if (msg.includes('fetch failed') || msg.includes('ENOTFOUND') || msg.includes('ECONNREFUSED')) {
+        return Response.json({ error: 'AI features require the local development environment. The AI API is not accessible from cloud deployments.' }, { status: 503 });
+      }
       return Response.json({ error: `AI generation failed: ${msg.slice(0, 200)}` }, { status: 504 });
     }
 

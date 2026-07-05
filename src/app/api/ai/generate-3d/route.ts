@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
 
     const zai = await getZAI();
 
-    let imageError = '';
+    // Step 1: Generate 3D image
     let base64Image: string | null = null;
     try {
       const enhancedPrompt = `Professional 3D CAD rendering: ${description}. Isometric view, gray background, metallic finish, SolidWorks style, studio lighting, no text`;
@@ -23,14 +23,15 @@ export async function POST(request: NextRequest) {
       const img = imageResult?.data?.[0];
       if (img?.base64) {
         base64Image = img.base64;
-      } else {
-        imageError = 'No base64 in response, keys: ' + JSON.stringify(img ? Object.keys(img) : 'null');
       }
     } catch (err: any) {
-      imageError = err?.message || String(err);
+      const msg = err?.message || String(err);
+      if (msg.includes('fetch failed') || msg.includes('ENOTFOUND')) {
+        return Response.json({ error: 'AI image generation requires the local development environment. The AI API is not accessible from cloud deployments.' }, { status: 503 });
+      }
     }
 
-    let planError = '';
+    // Step 2: Generate modeling plan
     let modelingPlan = '';
     try {
       const result = await zai.chat.completions.create({
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest) {
       });
       modelingPlan = result?.choices?.[0]?.message?.content || '';
     } catch (err: any) {
-      planError = err?.message || String(err);
+      // Plan is optional, don't fail the whole request
     }
 
     return Response.json({
@@ -52,8 +53,6 @@ export async function POST(request: NextRequest) {
       completedAt: Date.now(),
       image: base64Image,
       modelingPlan,
-      imageError: imageError || undefined,
-      planError: planError || undefined,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error';
