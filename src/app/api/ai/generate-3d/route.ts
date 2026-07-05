@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { getZAI } from '@/lib/zai';
 
 export async function POST(request: NextRequest) {
   try {
@@ -9,10 +10,11 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: 'Description is required' }, { status: 400 });
     }
 
+    const zai = await getZAI();
+
+    // Step 1: Generate 3D image
     let base64Image: string | null = null;
     try {
-      const ZAI = (await import('z-ai-web-dev-sdk')).default;
-      const zai = await ZAI.create();
       const enhancedPrompt = `Professional 3D CAD rendering: ${description}. Isometric view, gray background, metallic finish, SolidWorks style, studio lighting, no text`;
       const imageResult = await zai.images.generations.create({
         prompt: enhancedPrompt,
@@ -26,10 +28,9 @@ export async function POST(request: NextRequest) {
       console.error('Image generation failed:', err?.message || err);
     }
 
+    // Step 2: Generate modeling plan
     let modelingPlan = '';
     try {
-      const ZAI = (await import('z-ai-web-dev-sdk')).default;
-      const zai = await ZAI.create();
       const result = await zai.chat.completions.create({
         messages: [
           { role: 'system', content: 'Expert SolidWorks engineer. Write concise step-by-step modeling plan under 80 words.' },

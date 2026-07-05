@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { getZAI } from '@/lib/zai';
 
 export async function POST(request: NextRequest) {
   try {
@@ -37,8 +38,7 @@ export async function POST(request: NextRequest) {
 
     let content = '';
     try {
-      const ZAI = (await import('z-ai-web-dev-sdk')).default;
-      const zai = await ZAI.create();
+      const zai = await getZAI();
       const result = await zai.chat.completions.create({
         messages: [
           { role: 'system', content: systemPrompt },
@@ -49,8 +49,8 @@ export async function POST(request: NextRequest) {
       });
       content = result?.choices?.[0]?.message?.content || 'No content generated';
     } catch (err: any) {
-      const msg = err?.message || err?.toString?.() || 'AI generation failed';
-      return Response.json({ error: `AI generation failed: ${String(msg).slice(0, 200)}` }, { status: 504 });
+      const msg = err?.message || String(err);
+      return Response.json({ error: `AI generation failed: ${msg.slice(0, 200)}` }, { status: 504 });
     }
 
     return Response.json({ success: true, type, content });
