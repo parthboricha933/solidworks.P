@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
 
     const zai = await getZAI();
 
-    // Step 1: Generate 3D image
+    let imageError = '';
     let base64Image: string | null = null;
     try {
       const enhancedPrompt = `Professional 3D CAD rendering: ${description}. Isometric view, gray background, metallic finish, SolidWorks style, studio lighting, no text`;
@@ -23,12 +23,14 @@ export async function POST(request: NextRequest) {
       const img = imageResult?.data?.[0];
       if (img?.base64) {
         base64Image = img.base64;
+      } else {
+        imageError = 'No base64 in response, keys: ' + JSON.stringify(img ? Object.keys(img) : 'null');
       }
     } catch (err: any) {
-      console.error('Image generation failed:', err?.message || err);
+      imageError = err?.message || String(err);
     }
 
-    // Step 2: Generate modeling plan
+    let planError = '';
     let modelingPlan = '';
     try {
       const result = await zai.chat.completions.create({
@@ -41,7 +43,7 @@ export async function POST(request: NextRequest) {
       });
       modelingPlan = result?.choices?.[0]?.message?.content || '';
     } catch (err: any) {
-      console.error('Plan generation failed:', err?.message || err);
+      planError = err?.message || String(err);
     }
 
     return Response.json({
@@ -50,6 +52,8 @@ export async function POST(request: NextRequest) {
       completedAt: Date.now(),
       image: base64Image,
       modelingPlan,
+      imageError: imageError || undefined,
+      planError: planError || undefined,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error';
