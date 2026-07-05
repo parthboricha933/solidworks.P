@@ -1,15 +1,5 @@
 import { NextRequest } from 'next/server';
-import { spawn } from 'child_process';
-import path from 'path';
-import fs from 'fs/promises';
 
-const TASKS_DIR = path.join(process.cwd(), 'download', '.ai-tasks');
-
-async function ensureTasksDir() {
-  await fs.mkdir(TASKS_DIR, { recursive: true });
-}
-
-// POST: Start 3D generation task (returns immediately)
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -19,51 +9,57 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: 'Description is required' }, { status: 400 });
     }
 
-    await ensureTasksDir();
-    const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const taskFile = path.join(TASKS_DIR, `${taskId}.json`);
-
-    // Write initial task status
-    await fs.writeFile(taskFile, JSON.stringify({
-      id: taskId,
-      status: 'pending',
-      description,
-      createdAt: Date.now(),
-    }));
-
-    // Spawn detached worker process (independent from Next.js)
-    const workerPath = path.join(process.cwd(), 'ai-worker.mjs');
-    const child = spawn('node', [workerPath, taskId, description], {
-      detached: true,
-      stdio: 'ignore',
-      env: { ...process.env },
-    });
-    child.unref(); // Allow parent to exit without waiting for child
-
-    return Response.json({ success: true, taskId, status: 'pending' });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Error';
-    return Response.json({ error: message }, { status: 500 });
-  }
-}
-
-// GET: Check task status
-export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const taskId = searchParams.get('taskId');
-
-    if (!taskId) {
-      return Response.json({ error: 'taskId is required' }, { status: 400 });
-    }
-
-    const taskFile = path.join(TASKS_DIR, `${taskId}.json`);
+    // Step 1: Generate 3D image
+    let base64Image: string | null = null;
     try {
-      const data = await fs.readFile(taskFile, 'utf-8');
-      return Response.json(JSON.parse(data));
+      const ZAI = (await import('z-ai-web-dev-sdk')).default;
+      const zai = await ZAI.create();
+      const enhancedPrompt = `Professional 3D CAD rendering: ${description}. Isometric view, gray background, metallic finish, SolidWorks style, studio lighting, no text`;
+      const imageResult = await zai.images.generate({
+        prompt: enhancedPrompt,
+        size: '1024x1024',
+      });
+      if (imageResult?.data?.[0]) {
+        // Handle base64 or URL response
+        const img = imageResult.data[0];
+        if (img.b64_json) {
+          base64Image = img.b64_json;
+        } else if (img.url) {
+          // Fetch URL and convert to base64
+          const resp = await fetch(img.url);
+          const buffer = Buffer.from(await resp.arrayBuffer());
+          base64Image = buffer.toString('base64');
+        }
+      }
     } catch {
-      return Response.json({ error: 'Task not found' }, { status: 404 });
+      // Continue without image
     }
+
+    // Step 2: Generate modeling plan
+    let modelingPlan = '';
+    try {
+      const ZAI = (await import('z-ai-web-dev-sdk')).default;
+      const zai = await ZAI.create();
+      const result = await zai.chat.completions.create({
+        messages: [
+          { role: 'system', content: 'Expert SolidWorks engineer. Write concise step-by-step modeling plan under 80 words.' },
+          { role: 'user', content: `Plan for: ${description}` },
+        ],
+        temperature: 0.3,
+        max_tokens: 200,
+      });
+      modelingPlan = result?.choices?.[0]?.message?.content || '';
+    } catch {
+      // Continue without plan
+    }
+
+    return Response.json({
+      success: true,
+      status: 'completed',
+      completedAt: Date.now(),
+      image: base64Image,
+      modelingPlan,
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error';
     return Response.json({ error: message }, { status: 500 });

@@ -59,46 +59,20 @@ export default function AI3DModelGenerator() {
     setError('');
     setImage(null);
     setModelingPlan('');
-    setLoadingText('Starting 3D generation...');
+    setLoadingText('Generating 3D visualization...');
 
     try {
-      // Step 1: Start the task (returns immediately)
-      const startRes = await fetchJSON('/api/ai/generate-3d', {
+      const res = await fetchJSON('/api/ai/generate-3d', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ description: descriptionInput }),
-      });
+      }, 120000); // 2 min timeout for image generation
 
-      if (!startRes.success || !startRes.taskId) {
-        setError(startRes.error || 'Failed to start generation');
-        setLoading(false);
-        return;
-      }
-
-      const taskId = startRes.taskId;
-
-      // Step 2: Poll for results
-      const maxPolls = 60; // 60 * 3s = 3 minutes max
-      for (let i = 0; i < maxPolls; i++) {
-        await new Promise(r => setTimeout(r, 3000)); // Poll every 3s
-
-        const statusRes = await fetchJSON(`/api/ai/generate-3d?taskId=${taskId}`, undefined, 10000);
-
-        if (statusRes.status === 'generating_image') {
-          setLoadingText('Generating 3D visualization...');
-        } else if (statusRes.status === 'generating_plan') {
-          setLoadingText('Creating modeling plan...');
-        } else if (statusRes.status === 'completed') {
-          if (statusRes.image) setImage(statusRes.image);
-          if (statusRes.modelingPlan) setModelingPlan(statusRes.modelingPlan);
-          break;
-        } else if (statusRes.status === 'error') {
-          setError(statusRes.error || 'Generation failed');
-          break;
-        } else if (statusRes.error) {
-          setError(statusRes.error);
-          break;
-        }
+      if (res.error) {
+        setError(res.error);
+      } else {
+        if (res.image) setImage(res.image);
+        if (res.modelingPlan) setModelingPlan(res.modelingPlan);
       }
     } catch (e: any) {
       const msg = e.name === 'AbortError' ? 'Request timed out. Please try again.' : e.message;
