@@ -9,33 +9,23 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: 'Description is required' }, { status: 400 });
     }
 
-    // Step 1: Generate 3D image
     let base64Image: string | null = null;
     try {
       const ZAI = (await import('z-ai-web-dev-sdk')).default;
       const zai = await ZAI.create();
       const enhancedPrompt = `Professional 3D CAD rendering: ${description}. Isometric view, gray background, metallic finish, SolidWorks style, studio lighting, no text`;
-      const imageResult = await zai.images.generate({
+      const imageResult = await zai.images.generations.create({
         prompt: enhancedPrompt,
         size: '1024x1024',
       });
-      if (imageResult?.data?.[0]) {
-        // Handle base64 or URL response
-        const img = imageResult.data[0];
-        if (img.b64_json) {
-          base64Image = img.b64_json;
-        } else if (img.url) {
-          // Fetch URL and convert to base64
-          const resp = await fetch(img.url);
-          const buffer = Buffer.from(await resp.arrayBuffer());
-          base64Image = buffer.toString('base64');
-        }
+      const img = imageResult?.data?.[0];
+      if (img?.base64) {
+        base64Image = img.base64;
       }
-    } catch {
-      // Continue without image
+    } catch (err: any) {
+      console.error('Image generation failed:', err?.message || err);
     }
 
-    // Step 2: Generate modeling plan
     let modelingPlan = '';
     try {
       const ZAI = (await import('z-ai-web-dev-sdk')).default;
@@ -49,8 +39,8 @@ export async function POST(request: NextRequest) {
         max_tokens: 200,
       });
       modelingPlan = result?.choices?.[0]?.message?.content || '';
-    } catch {
-      // Continue without plan
+    } catch (err: any) {
+      console.error('Plan generation failed:', err?.message || err);
     }
 
     return Response.json({
