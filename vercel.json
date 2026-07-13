@@ -1,1 +1,11 @@
-{"framework":"nextjs"}
+{
+  "framework": "nextjs",
+  "functions": {
+    "src/app/api/ai/generate-3d/route.ts": {
+      "maxDuration": 120
+    },
+    "src/app/api/ai/solidworks/route.ts": {
+      "maxDuration": 60
+    }
+  }
+}
