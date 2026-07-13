@@ -27,4 +27,4 @@ export async function getZAI(): Promise<InstanceType<typeof ZAI>> {
     console.error('ZAI.create() failed (no config file):', e.message);
     throw new Error('AI SDK configuration not found. Ensure ZAI_CONFIG environment variable is set.');
   }
-}
+}// trigger rebuild
