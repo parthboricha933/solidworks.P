@@ -1,5 +1,20 @@
 import { NextRequest } from 'next/server';
-import { getZAI } from '@/lib/zai';
+
+export const maxDuration = 60;
+
+// Fallback: generate content via Pollinations text API when Z.ai is unavailable
+async function generateWithPollinationsText(systemPrompt: string, userPrompt: string): Promise<string> {
+  try {
+    const fullPrompt = `${systemPrompt}\n\nUser request: ${userPrompt}`;
+    const encoded = encodeURIComponent(fullPrompt);
+    const url = `https://text.pollinations.ai/${encoded}?model=openai&nologo=true`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(55000) });
+    if (!res.ok) return '';
+    return await res.text();
+  } catch {
+    return '';
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -37,7 +52,10 @@ export async function POST(request: NextRequest) {
     const maxTokens = (type === 'vba-macro' || type === 'python-script') ? 2000 : 1200;
 
     let content = '';
+
+    // Try Z.ai SDK first
     try {
+      const { getZAI } = await import('@/lib/zai');
       const zai = await getZAI();
       const result = await zai.chat.completions.create({
         messages: [
@@ -47,13 +65,14 @@ export async function POST(request: NextRequest) {
         temperature: 0.3,
         max_tokens: maxTokens,
       });
-      content = result?.choices?.[0]?.message?.content || 'No content generated';
-    } catch (err: any) {
-      const msg = err?.message || String(err);
-      if (msg.includes('fetch failed') || msg.includes('ENOTFOUND') || msg.includes('ECONNREFUSED')) {
-        return Response.json({ error: 'AI features require the local development environment. The AI API is not accessible from cloud deployments.' }, { status: 503 });
-      }
-      return Response.json({ error: `AI generation failed: ${msg.slice(0, 200)}` }, { status: 504 });
+      content = result?.choices?.[0]?.message?.content || '';
+    } catch {
+      // Z.ai SDK unavailable — fall back to Pollinations text API
+      content = await generateWithPollinationsText(systemPrompt, userPrompt);
+    }
+
+    if (!content) {
+      return Response.json({ error: 'AI generation failed. Please try again.' }, { status: 502 });
     }
 
     return Response.json({ success: true, type, content });

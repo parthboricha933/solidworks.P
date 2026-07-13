@@ -1,5 +1,37 @@
 import { NextRequest } from 'next/server';
-import { getZAI } from '@/lib/zai';
+
+export const maxDuration = 120;
+
+async function generateWithPollinations(prompt: string): Promise<string | null> {
+  try {
+    const encoded = encodeURIComponent(prompt);
+    const url = `https://image.pollinations.ai/prompt/${encoded}?width=1024&height=1024&nologo=true&model=flux`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(100000) });
+    if (!res.ok) return null;
+    const buffer = Buffer.from(await res.arrayBuffer());
+    return buffer.toString('base64');
+  } catch {
+    return null;
+  }
+}
+
+async function generateModelingPlan(description: string): Promise<string> {
+  try {
+    const { getZAI } = await import('@/lib/zai');
+    const zai = await getZAI();
+    const result = await zai.chat.completions.create({
+      messages: [
+        { role: 'system', content: 'Expert SolidWorks engineer. Write concise step-by-step modeling plan under 80 words.' },
+        { role: 'user', content: `Plan for: ${description}` },
+      ],
+      temperature: 0.3,
+      max_tokens: 200,
+    });
+    return result?.choices?.[0]?.message?.content || '';
+  } catch {
+    return '';
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,42 +42,29 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: 'Description is required' }, { status: 400 });
     }
 
-    const zai = await getZAI();
+    const enhancedPrompt = `Professional 3D CAD rendering: ${description}. Isometric view, gray background, metallic finish, SolidWorks style, studio lighting, no text, highly detailed engineering visualization`;
 
-    // Step 1: Generate 3D image
+    // Generate image (try Z.ai SDK first, fall back to Pollinations)
     let base64Image: string | null = null;
+
     try {
-      const enhancedPrompt = `Professional 3D CAD rendering: ${description}. Isometric view, gray background, metallic finish, SolidWorks style, studio lighting, no text`;
+      const { getZAI } = await import('@/lib/zai');
+      const zai = await getZAI();
       const imageResult = await zai.images.generations.create({
         prompt: enhancedPrompt,
         size: '1024x1024',
       });
       const img = imageResult?.data?.[0];
-      if (img?.base64) {
-        base64Image = img.base64;
-      }
-    } catch (err: any) {
-      const msg = err?.message || String(err);
-      if (msg.includes('fetch failed') || msg.includes('ENOTFOUND')) {
-        return Response.json({ error: 'AI image generation requires the local development environment. The AI API is not accessible from cloud deployments.' }, { status: 503 });
-      }
+      if (img?.base64) base64Image = img.base64;
+    } catch {
+      // Z.ai SDK not available (e.g. on Vercel) — fall back to Pollinations
+      base64Image = await generateWithPollinations(enhancedPrompt);
     }
 
-    // Step 2: Generate modeling plan
-    let modelingPlan = '';
-    try {
-      const result = await zai.chat.completions.create({
-        messages: [
-          { role: 'system', content: 'Expert SolidWorks engineer. Write concise step-by-step modeling plan under 80 words.' },
-          { role: 'user', content: `Plan for: ${description}` },
-        ],
-        temperature: 0.3,
-        max_tokens: 200,
-      });
-      modelingPlan = result?.choices?.[0]?.message?.content || '';
-    } catch (err: any) {
-      // Plan is optional, don't fail the whole request
-    }
+    // Generate modeling plan (optional, non-blocking)
+    const [modelingPlan] = await Promise.all([
+      generateModelingPlan(description),
+    ]);
 
     return Response.json({
       success: true,
